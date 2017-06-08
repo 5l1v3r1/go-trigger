@@ -27,6 +27,10 @@ type Function interface {
 
 var defaultTrigger = New()
 
+func Global() Trigger {
+	return defaultTrigger
+}
+
 // Default global trigger options.
 func On(name string, task interface{}) error {
 	_, err := defaultTrigger.Event(name).On(task)
