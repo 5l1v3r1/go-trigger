@@ -8,70 +8,126 @@ import (
 
 func New() Trigger {
 	return &trigger{
-		functionMap: make(map[string]interface{}),
+		events: make(map[string]*event),
 	}
 }
 
 type trigger struct {
-	functionMap map[string]interface{}
-
-	mu sync.Mutex
+	events map[string]*event
+	mu     sync.Mutex
 }
 
-func (t *trigger) On(event string, task interface{}) error {
+type event struct {
+	functions []*triggerfunc
+	mu        sync.Mutex
+}
+
+type triggerfunc struct {
+	function interface{}
+}
+
+var ForgottenFunction = errors.New("forgotten function")
+
+func (t *trigger) Event(name string) Event {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if _, ok := t.functionMap[event]; ok {
-		return errors.New("event already defined")
+	if e, found := t.events[name]; found {
+		return e
 	}
+	e := event{}
+	t.events[name] = &e
+	return &e
+}
+
+// Backwards compatible
+func (t *trigger) On(name string, task interface{}) error {
+	_, err := t.Event(name).On(task)
+	return err
+}
+
+func (e *event) On(task interface{}) (*triggerfunc, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	if reflect.ValueOf(task).Type().Kind() != reflect.Func {
-		return errors.New("task is not a function")
+		return nil, errors.New("task is not a function")
 	}
-	t.functionMap[event] = task
-	return nil
+	tf := triggerfunc{function: task}
+	e.functions = append(e.functions, &tf)
+	return &tf, nil
 }
 
-func (t *trigger) Fire(event string, params ...interface{}) ([]reflect.Value, error) {
-	f, in, err := t.read(event, params...)
-	if err != nil {
-		return nil, err
+func (e *event) Fire(params ...interface{}) ([][]reflect.Value, error) {
+	var results [][]reflect.Value
+	var ferr error
+	for _, ef := range e.functions {
+		f, in, err := ef.prepare(params...)
+		if err != nil {
+			if err != ForgottenFunction && ferr == nil {
+				ferr = err
+			}
+		} else {
+			results = append(results, f.Call(in))
+		}
 	}
-	result := f.Call(in)
-	return result, nil
+	return results, ferr
 }
 
-func (t *trigger) FireBackground(event string, params ...interface{}) (chan []reflect.Value, error) {
-	f, in, err := t.read(event, params...)
-	if err != nil {
-		return nil, err
-	}
-	results := make(chan []reflect.Value)
+func (e *event) FireBackground(params ...interface{}) (chan []reflect.Value, error) {
+	results := make(chan []reflect.Value, len(e.functions))
+	var wg sync.WaitGroup
+	wg.Add(len(e.functions))
 	go func() {
-		results <- f.Call(in)
+		for _, ef := range e.functions {
+			f, in, err := ef.prepare(params...)
+			if err == nil {
+				// Background it
+				go func() {
+					results <- f.Call(in)
+					wg.Done()
+				}()
+			} else {
+				// Failed, but done
+				wg.Done()
+			}
+		}
+		wg.Wait()
+		close(results)
 	}()
 	return results, nil
 }
 
-func (t *trigger) Clear(event string) error {
+func (e *event) FireAndForget(params ...interface{}) error {
+	go func() {
+		for _, ef := range e.functions {
+			f, in, err := ef.prepare(params...)
+			if err == nil {
+				f.Call(in)
+			}
+		}
+	}()
+	return nil
+}
+
+func (t *trigger) Clear(name string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if _, ok := t.functionMap[event]; !ok {
+	if _, ok := t.events[name]; !ok {
 		return errors.New("event not defined")
 	}
-	delete(t.functionMap, event)
+	delete(t.events, name)
 	return nil
 }
 
 func (t *trigger) ClearEvents() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.functionMap = make(map[string]interface{})
+	t.events = make(map[string]*event)
 }
 
-func (t *trigger) HasEvent(event string) bool {
+func (t *trigger) HasEvent(name string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	_, ok := t.functionMap[event]
+	_, ok := t.events[name]
 	return ok
 }
 
@@ -79,7 +135,7 @@ func (t *trigger) Events() []string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	events := make([]string, 0)
-	for k := range t.functionMap {
+	for k := range t.events {
 		events = append(events, k)
 	}
 	return events
@@ -88,17 +144,19 @@ func (t *trigger) Events() []string {
 func (t *trigger) EventCount() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return len(t.functionMap)
+	return len(t.events)
 }
 
-func (t *trigger) read(event string, params ...interface{}) (reflect.Value, []reflect.Value, error) {
-	t.mu.Lock()
-	task, ok := t.functionMap[event]
-	t.mu.Unlock()
-	if !ok {
-		return reflect.Value{}, nil, errors.New("no task found for event")
+func (ef *triggerfunc) Forget() error {
+	ef.function = nil
+	return nil
+}
+
+func (ef *triggerfunc) prepare(params ...interface{}) (reflect.Value, []reflect.Value, error) {
+	if ef.function == nil {
+		return reflect.Value{}, nil, ForgottenFunction
 	}
-	f := reflect.ValueOf(task)
+	f := reflect.ValueOf(ef.function)
 	if len(params) != f.Type().NumIn() {
 		return reflect.Value{}, nil, errors.New("parameter mismatched")
 	}

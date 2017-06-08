@@ -4,6 +4,7 @@ import (
 	"runtime"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -16,12 +17,14 @@ func TestOn(t *testing.T) {
 }
 
 func TestDualOn(t *testing.T) {
-	err := On("test-event", func() {})
+	var count int
+	err := On("test-event", func() { count++ })
 	assert.Equal(t, err, nil)
-	err2 := On("test-event", func() {})
-	assert.NotEqual(t, err2, nil)
-	assert.Equal(t, err2.Error(), "event already defined")
+	err2 := On("test-event", func() { count += 2 })
+	assert.Equal(t, err2, nil)
 	assert.Equal(t, 1, EventCount())
+	Fire("test-event")
+	assert.Equal(t, 3, count)
 	ClearEvents()
 }
 
@@ -36,12 +39,12 @@ func TestTrigger(t *testing.T) {
 	vales, err := Fire("test-event2", 100, 5)
 	assert.Equal(t, err, nil)
 	assert.NotEqual(t, vales, nil)
-	assert.Equal(t, vales[0].Int(), int64(105))
+	assert.Equal(t, vales[0][0].Int(), int64(105))
 
 	vales, err = Fire("test-event2", -100, 5)
 	assert.Equal(t, err, nil)
 	assert.NotEqual(t, vales, nil)
-	assert.Equal(t, vales[0].Int(), int64(-95))
+	assert.Equal(t, vales[0][0].Int(), int64(-95))
 
 	ClearEvents()
 }
@@ -109,14 +112,14 @@ func TestHasEvent(t *testing.T) {
 
 func TestParallel(t *testing.T) {
 	On("p-1", func() {
-		for i := 1; i <= 10000; i++ {
-
+		for i := 1; i <= 10; i++ {
+			time.Sleep(time.Millisecond * 10)
 		}
 	})
 
 	On("p-2", func() {
-		for i := 1; i <= 10000; i++ {
-
+		for i := 1; i <= 10; i++ {
+			time.Sleep(time.Millisecond * 10)
 		}
 	})
 	prev := runtime.NumGoroutine()
@@ -130,7 +133,7 @@ func TestParallel(t *testing.T) {
 	FireBackground("p-2")
 
 	now := runtime.NumGoroutine()
-	assert.Equal(t, 8, now-prev)
+	assert.Truef(t, 8 < now-prev, "Not enough background processes running: %v", now-prev)
 	ClearEvents()
 }
 
@@ -168,6 +171,6 @@ func TestFuncWithReceiver(t *testing.T) {
 	values, err := Fire("getName")
 	assert.Nil(t, err)
 	assert.Equal(t, 1, len(values))
-	assert.EqualValues(t, "aerokite", values[0].String())
+	assert.EqualValues(t, "aerokite", values[0][0].String())
 	assert.EqualValues(t, "aerokite", c.name)
 }
