@@ -45,6 +45,14 @@ func (t *trigger) On(name string, task interface{}) error {
 	return err
 }
 
+func (t *trigger) Fire(name string, params ...interface{}) ([][]reflect.Value, error) {
+	return t.Event(name).Fire(params)
+}
+
+func (t *trigger) FireBackground(name string, params ...interface{}) (chan []reflect.Value, error) {
+	return t.Event(name).FireBackground(params)
+}
+
 func (e *event) On(task interface{}) (*triggerfunc, error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()

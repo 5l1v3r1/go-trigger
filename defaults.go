@@ -5,6 +5,8 @@ import "reflect"
 type Trigger interface {
 	On(name string, task interface{}) error
 	Event(name string) Event
+	Fire(name string, params ...interface{}) ([][]reflect.Value, error)
+	FireBackground(name string, params ...interface{}) (chan []reflect.Value, error)
 	Clear(name string) error
 	ClearEvents()
 	HasEvent(name string) bool

@@ -133,7 +133,7 @@ func TestParallel(t *testing.T) {
 	FireBackground("p-2")
 
 	now := runtime.NumGoroutine()
-	assert.Truef(t, 8 < now-prev, "Not enough background processes running: %v", now-prev)
+	assert.Truef(t, 8 <= now-prev, "Not enough background processes running: %v", now-prev)
 	ClearEvents()
 }
 
